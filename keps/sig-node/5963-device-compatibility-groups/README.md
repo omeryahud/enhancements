@@ -1,0 +1,385 @@
+# KEP-5963: DRA Device Compatibility Groups
+
+- [Release Signoff Checklist](#release-signoff-checklist)
+- [Summary](#summary)
+- [Motivation](#motivation)
+  - [Goals](#goals)
+  - [Non-Goals](#non-goals)
+- [Proposal](#proposal)
+  - [User Stories](#user-stories-optional)
+    - [Story 1](#story-1-optional)
+    - [Story 2](#story-2-optional)
+  - [Notes/Constraints/Caveats](#notesconstraintscaveats-optional)
+  - [Risks and Mitigations](#risks-and-mitigations)
+- [Design Details](#design-details)
+  - [Test Plan](#test-plan)
+    - [Prerequisite testing updates](#prerequisite-testing-updates)
+    - [Unit tests](#unit-tests)
+    - [Integration tests](#integration-tests)
+    - [e2e tests](#e2e-tests)
+  - [Graduation Criteria](#graduation-criteria)
+  - [Upgrade / Downgrade Strategy](#upgrade--downgrade-strategy)
+  - [Version Skew Strategy](#version-skew-strategy)
+- [Production Readiness Review Questionnaire](#production-readiness-review-questionnaire)
+  - [Feature Enablement and Rollback](#feature-enablement-and-rollback)
+  - [Rollout, Upgrade and Rollback Planning](#rollout-upgrade-and-rollback-planning)
+  - [Monitoring Requirements](#monitoring-requirements)
+  - [Dependencies](#dependencies)
+  - [Scalability](#scalability)
+  - [Troubleshooting](#troubleshooting)
+- [Implementation History](#implementation-history)
+- [Drawbacks](#drawbacks)
+- [Alternatives](#alternatives)
+- [Infrastructure Needed (Optional)](#infrastructure-needed-optional)
+
+## Release Signoff Checklist
+
+Items marked with (R) are required *prior to targeting to a milestone / release*.
+
+- (R) Enhancement issue in release milestone, which links to KEP dir in [kubernetes/enhancements](https://git.k8s.io/enhancements) (not the initial KEP PR)
+- (R) KEP approvers have approved the KEP status as `implementable`
+- (R) Design details are appropriately documented
+- (R) Test plan is in place, giving consideration to SIG Architecture and SIG Testing input (including test refactors)
+  - e2e Tests for all Beta API Operations (endpoints)
+  - (R) Ensure GA e2e tests meet requirements for [Conformance Tests](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/conformance-tests.md)
+  - (R) Minimum Two Week Window for GA e2e tests to prove flake free
+- (R) Graduation criteria is in place
+  - (R) [all GA Endpoints](https://github.com/kubernetes/community/pull/1806) must be hit by [Conformance Tests](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/conformance-tests.md) within one minor version of promotion to GA
+- (R) Production readiness review completed
+- (R) Production readiness review approved
+- "Implementation History" section is up-to-date for milestone
+- User-facing documentation has been created in [kubernetes/website](https://git.k8s.io/website), for publication to [kubernetes.io](https://kubernetes.io/)
+- Supporting documentation—e.g., additional design documents, links to mailing list discussions/SIG meetings, relevant PRs/issues, release notes
+
+## Summary
+
+This KEP proposes an extension to the Dynamic Resource Allocation (DRA) API to
+support mutually exclusive device allocation constraints. Hardware devices often
+support multiple partitioning or virtualization schemes (for example, GPU MIG
+slicing vs. MPS sharing) that provide different trade-offs in terms of isolation,
+performance, and resource sharing. These schemes are frequently mutually exclusive
+at the hardware level: once a physical device is partitioned or configured using
+one scheme, it cannot be reconfigured to use a different scheme until all existing
+allocations are released.
+
+The current DRA Partitionable Devices API has no mechanism for drivers to express
+these mutual exclusivity constraints. Without it, incompatible allocations are only
+detected during resource preparation, after the scheduler has already made its
+decisions, leading to pod startup failures and resource thrashing. This KEP
+introduces API and scheduler changes so that compatibility constraints can be
+declared in ResourceSlice objects and enforced at scheduling time.
+
+## Motivation
+
+Hardware devices often support multiple partitioning or virtualization schemes
+that are mutually exclusive at the hardware level. For example, an NVIDIA GPU
+can be configured for MIG (Multi-Instance GPU) slicing or MPS (Multi-Process
+Service) sharing, but not both simultaneously on the same physical device.
+
+Without a mechanism to express these constraints in DRA, the following problems
+arise:
+
+1. **Late Failure Detection**: Incompatible allocations are only detected during
+  resource preparation, after scheduling decisions have already been made.
+2. **Scheduler Unawareness**: The scheduler may allocate incompatible devices,
+  leading to pod startup failures.
+3. **Poor User Experience**: Users receive cryptic preparation failures instead
+  of clear scheduling feedback.
+4. **Resource Thrashing**: The scheduler may repeatedly attempt incompatible
+  allocations before giving up.
+
+The current workaround—having DRA drivers fail resource preparation when
+incompatible allocations are attempted—is insufficient because it provides no
+mechanism to inform the scheduler, and does not prevent repeated failed attempts.
+
+### Goals
+
+- Allow DRA drivers to specify compatibility between virtual devices within a
+single physical device.
+- Allow the scheduler to make informed allocation decisions that respect
+compatibility rules declared in ResourceSlice objects.
+- Provide a generic mechanism applicable to any hardware with partitioning
+constraints, not just GPUs.
+- Maintain backward compatibility with existing ResourceSlice specifications.
+
+### Non-Goals
+
+- Allow DRA drivers to specify compatibility between physical or virtual devices
+across different physical devices or different device classes. The scope of
+compatibility constraints is limited to virtual devices sharing the same
+underlying physical device.
+
+## Proposal
+
+**CompatibilityGroups Assignment**
+
+Add a `device.consumesCounters[].compatibilityGroups` field. Devices declare which  
+named groups they belong to. For two devices consuming counters from the same  
+counter set to be co-allocated, they must share at least one compatibility group.  
+Devices without this field are considered compatible with all groups. This  
+approach is simpler and has minimal API surface.
+
+### User Stories
+
+#### Story 1
+
+As a GPU operator using NVIDIA GPUs, I want to express in my ResourceSlice
+that MIG-partitioned virtual devices and MPS-sharing virtual devices on the
+same physical GPU are mutually exclusive. When a pod requesting a MIG partition
+is already running on a GPU, I want the scheduler to automatically exclude all
+MPS devices on that same GPU from consideration for new allocations, rather than
+allowing an allocation that will fail at device preparation time.
+
+#### Story 2
+
+As a hardware vendor publishing DRA drivers for an accelerator that supports
+multiple exclusive operating modes (for example, exclusive mode, software
+partitioning, and hardware partitioning), I want to declare the compatibility
+constraints directly in my ResourceSlice, so that the Kubernetes scheduler
+can enforce those constraints without requiring my driver to fail pod startup
+with cryptic error messages.
+
+### Notes/Constraints/Caveats
+
+The compatibility constraint is bidirectional and transitive: if device A
+specifies a constraint that excludes device B, then allocating A must prevent
+B from being allocated, and vice versa. Both proposals implement this
+bidirectional check in the scheduler.
+
+### Risks and Mitigations
+
+**Scheduler performance impact**: Evaluating compatibility constraints during  
+device selection adds work to each scheduling cycle that involves DRA devices.
+
+**Older schedulers ignoring new field**: A kube-scheduler that does not  
+understand `compatibilityGroups` will ignore this  
+field and may allocate incompatible devices. This degrades to the current  
+behavior (driver fails at preparation time). Mitigation: document the version  
+skew behavior clearly; drivers must still validate at preparation time even  
+when the scheduler enforces constraints.
+
+**Incorrect driver declarations**: If a driver declares incorrect compatibility
+constraints, the scheduler may either reject valid allocations or permit invalid
+ones. Mitigation: the API is driver-authored and opt-in; drivers are responsible
+for correctness and documentation of their compatibility matrix.
+
+## Design Details
+
+### API
+
+#### CompatibilityGroups Assignment
+
+A new field `compatibilityGroups` is added inside each entry of
+`device.consumesCounters[]`. It contains a list of string group names.
+For two devices consuming counters from the same counter set to be allocated
+together, they must share at least one group name. Devices that omit this
+field are considered compatible with all groups.
+
+Example showing MIG and FOO partitions on the same physical GPU:
+
+```yaml
+apiVersion: resource.k8s.io/v1
+kind: ResourceSlice
+spec:
+  sharedCounters:
+    - name: gpu-1-cs
+      counters:
+        multiprocessors:
+          value: "152"
+  devices:
+    - name: gpu-1-mig1
+      consumesCounters:
+        - counterSet: gpu-1-cs
+          compatibilityGroups:
+            - mig
+          counters:
+            multiprocessors:
+              value: "2"
+    - name: gpu-1-foo-part
+      consumesCounters:
+        - counterSet: gpu-1-cs
+          compatibilityGroups:
+            - foo
+            - bar
+          counters:
+            multiprocessors:
+              value: "17"
+    - name: gpu-1-bar-part
+      consumesCounters:
+        - counterSet: gpu-1-cs
+          compatibilityGroups:
+            - foo
+            - bar
+          counters:
+            multiprocessors:
+              value: "17"
+```
+
+- `gpu-1-mig1` and `gpu-1-foo-part` share no compatibility group (`mig` vs
+`foo`/`bar`), so they cannot be co-allocated on the same counter set.
+- `gpu-1-foo-part` and `gpu-1-bar-part` share compatibility groups (`foo`, `bar`),  
+so they can be co-allocated on the same counter set.
+
+### Scheduler Changes
+
+The DRA scheduler plugin is enhanced to:
+
+1. Maintain a cache of allocated devices per node, including their compatibility
+  fields (`compatibilityGroups` values).
+2. For each candidate device during allocation, evaluate whether it is compatible
+  with all currently allocated devices on the node, and whether all allocated
+   devices are compatible with it (bidirectional check).
+3. Remove candidate devices from consideration if they violate compatibility
+  constraints.
+4. Emit clear scheduling events when a device is rejected due to compatibility.
+
+### Driver Responsibilities
+
+Resource drivers are responsible for:
+
+1. Populating `compatibilityGroups` for all devices with compatibility requirements.
+2. Ensuring compatibility rules are symmetric and consistent across all devices
+  in a ResourceSlice.
+3. Documenting their compatibility matrix.
+4. Continuing to validate at resource preparation time for version-skew safety.
+
+### Test Plan
+
+[X] I/we understand the owners of the involved components may require updates to  
+existing tests to make this code solid enough prior to committing the changes necessary  
+to implement this enhancement.
+
+##### Prerequisite testing updates
+
+##### Unit tests
+
+- TBD
+
+##### Integration tests
+
+- TBD
+
+##### e2e tests
+
+- TBD
+
+### Graduation Criteria
+
+### Upgrade / Downgrade Strategy
+
+### Version Skew Strategy
+
+## Production Readiness Review Questionnaire
+
+### Feature Enablement and Rollback
+
+###### How can this feature be enabled / disabled in a live cluster?
+
+- Feature gate (also fill in values in `kep.yaml`)
+  - Feature gate name: DRADeviceCompatibilityGroups
+  - Components depending on the feature gate: kube-scheduler
+- Other
+  - Describe the mechanism:
+  - Will enabling / disabling the feature require downtime of the control
+  plane?
+  - Will enabling / disabling the feature require downtime or reprovisioning
+  of a node?
+
+###### Does enabling the feature change any default behavior?
+
+###### Can the feature be disabled once it has been enabled (i.e. can we roll back the enablement)?
+
+###### What happens if we reenable the feature if it was previously rolled back?
+
+###### Are there any tests for feature enablement/disablement?
+
+### Rollout, Upgrade and Rollback Planning
+
+###### How can a rollout or rollback fail? Can it impact already running workloads?
+
+###### What specific metrics should inform a rollback?
+
+###### Were upgrade and rollback tested? Was the upgrade->downgrade->upgrade path tested?
+
+###### Is the rollout accompanied by any deprecations and/or removals of features, APIs, fields of API types, flags, etc.?
+
+### Monitoring Requirements
+
+###### How can an operator determine if the feature is in use by workloads?
+
+###### How can someone using this feature know that it is working for their instance?
+
+- Events
+  - Event Reason:
+- API .status
+  - Condition name: 
+  - Other field:
+- Other (treat as last resort)
+  - Details:
+
+###### What are the reasonable SLOs (Service Level Objectives) for the enhancement?
+
+###### What are the SLIs (Service Level Indicators) an operator can use to determine the health of the service?
+
+- Metrics
+  - Metric name:
+  - [Optional] Aggregation method:
+  - Components exposing the metric:
+- Other (treat as last resort)
+  - Details:
+
+###### Are there any missing metrics that would be useful to have to improve observability of this feature?
+
+### Dependencies
+
+###### Does this feature depend on any specific services running in the cluster?
+
+### Scalability
+
+###### Will enabling / using this feature result in any new API calls?
+
+###### Will enabling / using this feature result in introducing new API types?
+
+###### Will enabling / using this feature result in any new calls to the cloud provider?
+
+###### Will enabling / using this feature result in increasing size or count of the existing API objects?
+
+###### Will enabling / using this feature result in increasing time taken by any operations covered by existing SLIs/SLOs?
+
+###### Will enabling / using this feature result in non-negligible increase of resource usage (CPU, RAM, disk, IO, ...) in any components?
+
+###### Can enabling / using this feature result in resource exhaustion of some node resources (PIDs, sockets, inodes, etc.)?
+
+### Troubleshooting
+
+###### How does this feature react if the API server and/or etcd is unavailable?
+
+###### What are other known failure modes?
+
+###### What steps should be taken if SLOs are not being met to determine the problem?
+
+## Implementation History
+
+## Drawbacks
+
+Adding compatibility constraint support to the scheduler increases the  
+complexity of the DRA scheduling logic. The new field must be evaluated for  
+every device candidate during every scheduling cycle that involves DRA  
+resources, which adds latency and memory overhead.
+
+## Alternatives
+
+### Current Workaround: Driver-level Preparation Failure
+
+The existing workaround is for DRA drivers to fail resource preparation when
+incompatible allocations are attempted. This approach is insufficient because:
+
+- It detects incompatibilities only after scheduling has committed to the
+allocation, leading to pod startup failures.
+- It provides no mechanism to inform the scheduler so it can try other nodes
+or device combinations.
+- It results in resource thrashing as the scheduler retries the same failing
+combination.
+
+## Infrastructure Needed (Optional)
+
