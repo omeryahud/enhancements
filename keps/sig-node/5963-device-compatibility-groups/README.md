@@ -264,10 +264,31 @@ to implement this enhancement.
 - TBD
 
 ### Graduation Criteria
+#### Alpha
+- API defined and implemented
+- All relevant code is merged and placed behind a feature flag
+- Unit and integration tests
+- Documentation
+
+#### Beta
+- E2E tests passing in CI 
+- Validated with at least one production DRA driver (out-of-tree testing)
+
+#### GA
+- At least 2 releases as beta
 
 ### Upgrade / Downgrade Strategy
+#### Upgrade
+Upon upgrading, no `ResourceSlice` leverages the new optional fields yet, so the current behavior remains as-is
+
+#### Downgrade
+If downgrading to a version that does not have this enhancement implemented, older schedulers and api-servers do not know of the added optional field, and revert to their defined behavior prior to this enhancement
+
+Allocated devices that leveraged this new field will remain allocated, and future allocations will not take `compatibilityGroups` into consideration.
+
 
 ### Version Skew Strategy
+No version skew concerns
 
 ## Production Readiness Review Questionnaire
 
@@ -275,9 +296,9 @@ to implement this enhancement.
 
 ###### How can this feature be enabled / disabled in a live cluster?
 
-- Feature gate (also fill in values in `kep.yaml`)
+- Feature gate
   - Feature gate name: DRADeviceCompatibilityGroups
-  - Components depending on the feature gate: kube-scheduler
+  - Components depending on the feature gate: kube-scheduler, kube-apiserver
 - Other
   - Describe the mechanism:
   - Will enabling / disabling the feature require downtime of the control
@@ -286,77 +307,93 @@ to implement this enhancement.
   of a node?
 
 ###### Does enabling the feature change any default behavior?
+No, this KEP proposes an additional optional field to the `ResourceSlice` API
 
 ###### Can the feature be disabled once it has been enabled (i.e. can we roll back the enablement)?
+Yes, rolling back the enablement will revert the cluster to its pre-enablemend behavior
 
 ###### What happens if we reenable the feature if it was previously rolled back?
+Existing `compatibilityGroup` configurations in `ResourceSlice`s will become effective again
 
 ###### Are there any tests for feature enablement/disablement?
+Yes, there will be integration tests to verify feature enablement/disablement
 
 ### Rollout, Upgrade and Rollback Planning
 
 ###### How can a rollout or rollback fail? Can it impact already running workloads?
+I expect code changes in `kube-apiserver` and `kube-scheduler`, so something can go wrong with those.
+No impact on already running workloads.
 
 ###### What specific metrics should inform a rollback?
+TBD
 
 ###### Were upgrade and rollback tested? Was the upgrade->downgrade->upgrade path tested?
+TBD
 
 ###### Is the rollout accompanied by any deprecations and/or removals of features, APIs, fields of API types, flags, etc.?
+Removal of a field from the `ResourceSlice` API
 
 ### Monitoring Requirements
 
 ###### How can an operator determine if the feature is in use by workloads?
+This feature is not intended for use by workload usage, it is intended for DRA Drivers
 
 ###### How can someone using this feature know that it is working for their instance?
 
 - Events
-  - Event Reason:
-- API .status
-  - Condition name: 
-  - Other field:
-- Other (treat as last resort)
-  - Details:
+  - Scheduling events:
+    - When all allocated devices in all Nodes are not compatible with any device that is considered for allocation the following event will be emitted by the scheduler for each Node: "No available nodes found: claim violates device conpatibility constraints"
+- Pod.status
+  - Condition name: Unschedulable
 
 ###### What are the reasonable SLOs (Service Level Objectives) for the enhancement?
+N/A
 
 ###### What are the SLIs (Service Level Indicators) an operator can use to determine the health of the service?
-
-- Metrics
-  - Metric name:
-  - [Optional] Aggregation method:
-  - Components exposing the metric:
-- Other (treat as last resort)
-  - Details:
+N/A
 
 ###### Are there any missing metrics that would be useful to have to improve observability of this feature?
+No
 
 ### Dependencies
+DRA Partitionable Devices enabled
 
 ###### Does this feature depend on any specific services running in the cluster?
+No
 
 ### Scalability
 
 ###### Will enabling / using this feature result in any new API calls?
+No
 
 ###### Will enabling / using this feature result in introducing new API types?
+No, only a new API field
 
 ###### Will enabling / using this feature result in any new calls to the cloud provider?
+No
 
 ###### Will enabling / using this feature result in increasing size or count of the existing API objects?
+Yes, additional field to the `ResourceSlice` API
 
 ###### Will enabling / using this feature result in increasing time taken by any operations covered by existing SLIs/SLOs?
+Scheduling cycles will take longer to complete due to the additional responsibility the scheduler will recieve, I expect it to be negligible
 
 ###### Will enabling / using this feature result in non-negligible increase of resource usage (CPU, RAM, disk, IO, ...) in any components?
+No
 
 ###### Can enabling / using this feature result in resource exhaustion of some node resources (PIDs, sockets, inodes, etc.)?
+No
 
 ### Troubleshooting
 
 ###### How does this feature react if the API server and/or etcd is unavailable?
+No new side effects
 
 ###### What are other known failure modes?
+N/A
 
 ###### What steps should be taken if SLOs are not being met to determine the problem?
+TBD
 
 ## Implementation History
 
