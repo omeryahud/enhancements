@@ -190,11 +190,26 @@ Example showing MIG and FOO partitions on the same physical GPU:
 apiVersion: resource.k8s.io/v1
 kind: ResourceSlice
 spec:
+  driver: gpu.example.com
+  pool:
+    name: node-1-pool
+    generation: 1
+    resourceSliceCount: 2
   sharedCounters:
     - name: gpu-1-cs
       counters:
         multiprocessors:
           value: "152"
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceSlice
+spec:
+  driver: gpu.example.com
+  pool:
+    name: node-1-pool
+    generation: 1
+    resourceSliceCount: 2
+  nodeName: node-1
   devices:
     - name: gpu-1-mig1
       consumesCounters:
@@ -242,25 +257,37 @@ capacity of a physical device across its virtual partitions. When all virtual
 devices on a GPU use the same partitioning scheme, the counter capacity check
 is sufficient to ensure correct allocation.
 
-ResourceSlice — a single GPU advertising three MIG 1g partitions:
+ResourceSlices — a single GPU advertising three MIG 1g partitions (counter set
+and devices must be in separate ResourceSlices within the same pool):
 
 ```yaml
 apiVersion: resource.k8s.io/v1
 kind: ResourceSlice
 metadata:
-  name: node-1-gpu-0
+  name: node-1-gpu-0-counters
 spec:
   driver: gpu.example.com
   pool:
     name: node-1-pool
     generation: 1
-    resourceSliceCount: 1
-  nodeName: node-1
+    resourceSliceCount: 2
   sharedCounters:
     - name: gpu-0-counters
       counters:
         multiprocessors:
           value: "152"
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceSlice
+metadata:
+  name: node-1-gpu-0-devices
+spec:
+  driver: gpu.example.com
+  pool:
+    name: node-1-pool
+    generation: 1
+    resourceSliceCount: 2
+  nodeName: node-1
   devices:
     - name: gpu-0-mig-1g-0
       attributes:
@@ -303,11 +330,12 @@ spec:
   devices:
     requests:
       - name: gpu
-        selectors:
-          - cel:
-              expression: >-
-                device.driver == 'gpu.example.com' &&
-                device.attributes['type'].string == 'mig-1g'
+        exactly:
+          deviceClassName: gpu.example.com
+          selectors:
+            - cel:
+                expression: >-
+                  device.attributes['type'].string == 'mig-1g'
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
@@ -318,11 +346,12 @@ spec:
   devices:
     requests:
       - name: gpu
-        selectors:
-          - cel:
-              expression: >-
-                device.driver == 'gpu.example.com' &&
-                device.attributes['type'].string == 'mig-1g'
+        exactly:
+          deviceClassName: gpu.example.com
+          selectors:
+            - cel:
+                expression: >-
+                  device.attributes['type'].string == 'mig-1g'
 ```
 
 The scheduler allocates `gpu-0-mig-1g-0` to pod-a and `gpu-0-mig-1g-1` to
@@ -335,25 +364,36 @@ When a driver advertises devices from multiple mutually exclusive partitioning
 schemes on the same GPU, all sharing the same counter set, the current API has
 no way to express that these schemes cannot coexist.
 
-ResourceSlice — the same GPU now advertising both MIG and MPS devices:
+ResourceSlices — the same GPU now advertising both MIG and MPS devices:
 
 ```yaml
 apiVersion: resource.k8s.io/v1
 kind: ResourceSlice
 metadata:
-  name: node-1-gpu-0
+  name: node-1-gpu-0-counters
 spec:
   driver: gpu.example.com
   pool:
     name: node-1-pool
     generation: 1
-    resourceSliceCount: 1
-  nodeName: node-1
+    resourceSliceCount: 2
   sharedCounters:
     - name: gpu-0-counters
       counters:
         multiprocessors:
           value: "152"
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceSlice
+metadata:
+  name: node-1-gpu-0-devices
+spec:
+  driver: gpu.example.com
+  pool:
+    name: node-1-pool
+    generation: 1
+    resourceSliceCount: 2
+  nodeName: node-1
   devices:
     # MIG partitions
     - name: gpu-0-mig-1g-0
@@ -407,11 +447,12 @@ spec:
   devices:
     requests:
       - name: gpu
-        selectors:
-          - cel:
-              expression: >-
-                device.driver == 'gpu.example.com' &&
-                device.attributes['type'].string == 'mig-1g'
+        exactly:
+          deviceClassName: gpu.example.com
+          selectors:
+            - cel:
+                expression: >-
+                  device.attributes['type'].string == 'mig-1g'
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
@@ -422,11 +463,12 @@ spec:
   devices:
     requests:
       - name: gpu
-        selectors:
-          - cel:
-              expression: >-
-                device.driver == 'gpu.example.com' &&
-                device.attributes['type'].string == 'mps-half'
+        exactly:
+          deviceClassName: gpu.example.com
+          selectors:
+            - cel:
+                expression: >-
+                  device.attributes['type'].string == 'mps-half'
 ```
 
 The scheduler sees `gpu-0-mig-1g-0` (22 SMs) and `gpu-0-mps-half-0` (76 SMs).
@@ -443,25 +485,36 @@ With `compatibilityGroups`, the driver declares that MIG devices belong to the
 enforces that devices sharing a counter set must share at least one
 compatibility group.
 
-ResourceSlice — same devices, now with compatibility groups:
+ResourceSlices — same devices, now with compatibility groups:
 
 ```yaml
 apiVersion: resource.k8s.io/v1
 kind: ResourceSlice
 metadata:
-  name: node-1-gpu-0
+  name: node-1-gpu-0-counters
 spec:
   driver: gpu.example.com
   pool:
     name: node-1-pool
     generation: 1
-    resourceSliceCount: 1
-  nodeName: node-1
+    resourceSliceCount: 2
   sharedCounters:
     - name: gpu-0-counters
       counters:
         multiprocessors:
           value: "152"
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceSlice
+metadata:
+  name: node-1-gpu-0-devices
+spec:
+  driver: gpu.example.com
+  pool:
+    name: node-1-pool
+    generation: 1
+    resourceSliceCount: 2
+  nodeName: node-1
   devices:
     # MIG partitions
     - name: gpu-0-mig-1g-0
@@ -523,11 +576,12 @@ spec:
   devices:
     requests:
       - name: gpu
-        selectors:
-          - cel:
-              expression: >-
-                device.driver == 'gpu.example.com' &&
-                device.attributes['type'].string == 'mig-1g'
+        exactly:
+          deviceClassName: gpu.example.com
+          selectors:
+            - cel:
+                expression: >-
+                  device.attributes['type'].string == 'mig-1g'
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
@@ -538,11 +592,12 @@ spec:
   devices:
     requests:
       - name: gpu
-        selectors:
-          - cel:
-              expression: >-
-                device.driver == 'gpu.example.com' &&
-                device.attributes['type'].string == 'mps-half'
+        exactly:
+          deviceClassName: gpu.example.com
+          selectors:
+            - cel:
+                expression: >-
+                  device.attributes['type'].string == 'mps-half'
 ```
 
 The scheduler allocates `gpu-0-mig-1g-0` (group: `mig`) to pod-a. When
@@ -565,25 +620,36 @@ is incompatible with both. The driver expresses this by placing MPS and vGPU
 devices in a shared compatibility group (`shared-modes`) while MIG devices
 use a separate group (`mig`).
 
-ResourceSlice — a GPU advertising MPS, vGPU, and MIG devices:
+ResourceSlices — a GPU advertising MPS, vGPU, and MIG devices:
 
 ```yaml
 apiVersion: resource.k8s.io/v1
 kind: ResourceSlice
 metadata:
-  name: node-1-gpu-0
+  name: node-1-gpu-0-counters
 spec:
   driver: gpu.example.com
   pool:
     name: node-1-pool
     generation: 1
-    resourceSliceCount: 1
-  nodeName: node-1
+    resourceSliceCount: 2
   sharedCounters:
     - name: gpu-0-counters
       counters:
         multiprocessors:
           value: "152"
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceSlice
+metadata:
+  name: node-1-gpu-0-devices
+spec:
+  driver: gpu.example.com
+  pool:
+    name: node-1-pool
+    generation: 1
+    resourceSliceCount: 2
+  nodeName: node-1
   devices:
     # MPS shares
     - name: gpu-0-mps-half-0
