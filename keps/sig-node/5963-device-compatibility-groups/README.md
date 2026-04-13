@@ -613,89 +613,94 @@ still be co-allocated, since they share a group.
 #### Example 4: Multiple compatible groups with an incompatible group
 
 A device may support more than two partitioning schemes, some of which can
-coexist. For example, consider a GPU that supports three modes: MPS
-(software time-sharing), vGPU (virtual GPU pass-through), and MIG (hardware
-partitioning). MPS and vGPU can coexist on the same physical GPU, but MIG
-is incompatible with both. The driver expresses this by placing MPS and vGPU
-devices in a shared compatibility group (`shared-modes`) while MIG devices
-use a separate group (`mig`).
+coexist. Devices that can coexist share a compatibility group, while
+incompatible devices use a separate group. In this example, a device
+advertises three partition types: `foo`, `bar`, and `baz`. `foo` and `bar`
+can coexist on the same device, but `baz` is incompatible with both. Each
+partition type has its own compatibility group (`group-foo`, `group-bar`,
+`group-baz`), and `foo` and `bar` devices additionally share the `group-fb`
+compatibility group to express their mutual compatibility.
 
-ResourceSlices — a GPU advertising MPS, vGPU, and MIG devices:
+ResourceSlices — a device advertising foo, bar, and baz partitions:
 
 ```yaml
 apiVersion: resource.k8s.io/v1
 kind: ResourceSlice
 metadata:
-  name: node-1-gpu-0-counters
+  name: node-1-device-0-counters
 spec:
-  driver: gpu.example.com
+  driver: device.example.com
   pool:
     name: node-1-pool
     generation: 1
     resourceSliceCount: 2
   sharedCounters:
-    - name: gpu-0-counters
+    - name: device-0-counters
       counters:
-        multiprocessors:
-          value: "152"
+        units:
+          value: "100"
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceSlice
 metadata:
-  name: node-1-gpu-0-devices
+  name: node-1-device-0-devices
 spec:
-  driver: gpu.example.com
+  driver: device.example.com
   pool:
     name: node-1-pool
     generation: 1
     resourceSliceCount: 2
   nodeName: node-1
   devices:
-    # MPS shares
-    - name: gpu-0-mps-half-0
+    # foo partitions
+    - name: device-0-foo-0
       attributes:
         type:
-          string: "mps-half"
+          string: "foo"
       consumesCounters:
-        - counterSet: gpu-0-counters
+        - counterSet: device-0-counters
           compatibilityGroups:
-            - shared-modes
+            - group-foo
+            - group-fb
           counters:
-            multiprocessors:
-              value: "76"
-    # vGPU pass-through
-    - name: gpu-0-vgpu-0
+            units:
+              value: "25"
+    # bar partitions
+    - name: device-0-bar-0
       attributes:
         type:
-          string: "vgpu"
+          string: "bar"
       consumesCounters:
-        - counterSet: gpu-0-counters
+        - counterSet: device-0-counters
           compatibilityGroups:
-            - shared-modes
+            - group-bar
+            - group-fb
           counters:
-            multiprocessors:
-              value: "76"
-    # MIG partition
-    - name: gpu-0-mig-1g-0
+            units:
+              value: "25"
+    # baz partitions
+    - name: device-0-baz-0
       attributes:
         type:
-          string: "mig-1g"
+          string: "baz"
       consumesCounters:
-        - counterSet: gpu-0-counters
+        - counterSet: device-0-counters
           compatibilityGroups:
-            - mig
+            - group-baz
           counters:
-            multiprocessors:
-              value: "22"
+            units:
+              value: "50"
 ```
 
-`gpu-0-mps-half-0` and `gpu-0-vgpu-0` share the `shared-modes` group, so they
-can be co-allocated. `gpu-0-mig-1g-0` belongs only to `mig`, which shares no
-group with either MPS or vGPU devices, so it cannot be co-allocated with them.
+`device-0-foo-0` and `device-0-bar-0` share the `group-fb` compatibility group,
+so they can be co-allocated. `device-0-baz-0` belongs only to `group-baz`, which
+shares no group with either foo or bar devices, so it cannot be co-allocated
+with them.
 
-For instance, if pod-a is allocated `gpu-0-mps-half-0`, a subsequent pod
-requesting `gpu-0-vgpu-0` succeeds (both `shared-modes`), but a pod requesting
-`gpu-0-mig-1g-0` is rejected (`shared-modes` vs `mig` — no shared group).
+For instance, if pod-a is allocated `device-0-foo-0`, a subsequent pod
+requesting `device-0-bar-0` succeeds (both share `group-fb`), but a pod
+requesting `device-0-baz-0` is rejected (`group-fb` vs `group-baz` — no
+shared group).
 
 ### Scheduler Changes
 
