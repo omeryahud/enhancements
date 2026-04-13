@@ -152,7 +152,7 @@ with cryptic error messages.
 
 The compatibility constraint is bidirectional and transitive: if device A
 specifies a constraint that excludes device B, then allocating A must prevent
-B from being allocated, and vice versa. Both proposals implement this
+B from being allocated, and vice versa. This proposal implements this
 bidirectional check in the scheduler.
 
 ### Risks and Mitigations
@@ -721,7 +721,7 @@ No version skew concerns
 No, this KEP proposes an additional optional field to the `ResourceSlice` API
 
 ###### Can the feature be disabled once it has been enabled (i.e. can we roll back the enablement)?
-Yes, rolling back the enablement will revert the cluster to its pre-enablemend behavior
+Yes, rolling back the enablement will revert the cluster to its pre-enablement behavior
 
 ###### What happens if we reenable the feature if it was previously rolled back?
 Existing `compatibilityGroup` configurations in `ResourceSlice`s will become effective again
@@ -742,7 +742,7 @@ TBD
 TBD
 
 ###### Is the rollout accompanied by any deprecations and/or removals of features, APIs, fields of API types, flags, etc.?
-Removal of a field from the `ResourceSlice` API
+No
 
 ### Monitoring Requirements
 
@@ -753,7 +753,7 @@ This feature is not intended for use by workload usage, it is intended for DRA D
 
 - Events
   - Scheduling events:
-    - When all allocated devices in all Nodes are not compatible with any device that is considered for allocation the following event will be emitted by the scheduler for each Node: "No available nodes found: claim violates device conpatibility constraints"
+    - When all allocated devices in all Nodes are not compatible with any device that is considered for allocation the following event will be emitted by the scheduler for each Node: "No available nodes found: claim violates device compatibility constraints"
 - Pod.status
   - Condition name: Unschedulable
 
