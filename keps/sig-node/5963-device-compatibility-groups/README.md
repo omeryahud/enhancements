@@ -411,19 +411,19 @@ spec:
             multiprocessors:
               value: "20"
     # MPS shares
-    - name: gpu-0-mps-half-0
+    - name: gpu-0-mps-0
       attributes:
         type:
-          string: "mps-half"
+          string: "mps"
       consumesCounters:
         - counterSet: gpu-0-counters
           counters:
             multiprocessors:
               value: "50"
-    - name: gpu-0-mps-half-1
+    - name: gpu-0-mps-1
       attributes:
         type:
-          string: "mps-half"
+          string: "mps"
       consumesCounters:
         - counterSet: gpu-0-counters
           counters:
@@ -462,10 +462,10 @@ spec:
           - cel:
               expression: >-
                 device.driver == 'gpu.example.com' &&
-                device.attributes['type'].string == 'mps-half'
+                device.attributes['type'].string == 'mps'
 ```
 
-The scheduler sees `gpu-0-mig-1g-0` (20 SMs) and `gpu-0-mps-half-0` (50 SMs).
+The scheduler sees `gpu-0-mig-1g-0` (20 SMs) and `gpu-0-mps-0` (50 SMs).
 Total: 70 <= 100 — the counter capacity check passes. The scheduler allocates
 both. But at preparation time, the driver fails because MIG and MPS cannot be
 active simultaneously on the same physical GPU. Pod-b gets a cryptic
@@ -534,10 +534,10 @@ spec:
             multiprocessors:
               value: "20"
     # MPS shares
-    - name: gpu-0-mps-half-0
+    - name: gpu-0-mps-0
       attributes:
         type:
-          string: "mps-half"
+          string: "mps"
       consumesCounters:
         - counterSet: gpu-0-counters
           compatibilityGroups:
@@ -545,10 +545,10 @@ spec:
           counters:
             multiprocessors:
               value: "50"
-    - name: gpu-0-mps-half-1
+    - name: gpu-0-mps-1
       attributes:
         type:
-          string: "mps-half"
+          string: "mps"
       consumesCounters:
         - counterSet: gpu-0-counters
           compatibilityGroups:
@@ -589,11 +589,11 @@ spec:
           - cel:
               expression: >-
                 device.driver == 'gpu.example.com' &&
-                device.attributes['type'].string == 'mps-half'
+                device.attributes['type'].string == 'mps'
 ```
 
 The scheduler allocates `gpu-0-mig-1g-0` (group: `mig`) to pod-a. When
-evaluating `gpu-0-mps-half-0` (group: `mps`) for pod-b, it checks
+evaluating `gpu-0-mps-0` (group: `mps`) for pod-b, it checks
 compatibility: both devices consume from `gpu-0-counters`, but they share no
 compatibility group (`mig` vs `mps`). The scheduler rejects the allocation and
 pod-b becomes Unschedulable with event: "claim violates device compatibility
