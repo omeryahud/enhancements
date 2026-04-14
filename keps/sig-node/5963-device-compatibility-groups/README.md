@@ -114,8 +114,7 @@ constraints, not just GPUs.
 ### Non-Goals
 
 - Allow DRA drivers to specify compatibility between physical or virtual devices
-across different physical devices or different device classes. The scope of
-compatibility constraints is limited to virtual devices sharing the same
+across different physical devices. The scope of compatibility constraints is limited to virtual devices sharing the same
 underlying physical device.
 
 ## Proposal
@@ -257,8 +256,7 @@ capacity of a physical device across its virtual partitions. When all virtual
 devices on a GPU use the same partitioning scheme, the counter capacity check
 is sufficient to ensure correct allocation.
 
-ResourceSlices — a single GPU advertising three MIG 1g partitions (counter set
-and devices must be in separate ResourceSlices within the same pool):
+ResourceSlices — a single GPU advertising three MIG 1g partitions:
 
 ```yaml
 apiVersion: resource.k8s.io/v1
@@ -275,7 +273,7 @@ spec:
     - name: gpu-0-counters
       counters:
         multiprocessors:
-          value: "152"
+          value: "100"
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceSlice
@@ -297,7 +295,7 @@ spec:
         - counterSet: gpu-0-counters
           counters:
             multiprocessors:
-              value: "22"
+              value: "20"
     - name: gpu-0-mig-1g-1
       attributes:
         type:
@@ -306,7 +304,7 @@ spec:
         - counterSet: gpu-0-counters
           counters:
             multiprocessors:
-              value: "22"
+              value: "20"
     - name: gpu-0-mig-1g-2
       attributes:
         type:
@@ -315,7 +313,7 @@ spec:
         - counterSet: gpu-0-counters
           counters:
             multiprocessors:
-              value: "22"
+              value: "20"
 ```
 
 ResourceClaims — two pods each requesting a MIG 1g partition:
@@ -330,12 +328,11 @@ spec:
   devices:
     requests:
       - name: gpu
-        exactly:
-          deviceClassName: gpu.example.com
-          selectors:
-            - cel:
-                expression: >-
-                  device.attributes['type'].string == 'mig-1g'
+        selectors:
+          - cel:
+              expression: >-
+                device.driver == 'gpu.example.com' &&
+                device.attributes['type'].string == 'mig-1g'
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
@@ -346,16 +343,15 @@ spec:
   devices:
     requests:
       - name: gpu
-        exactly:
-          deviceClassName: gpu.example.com
-          selectors:
-            - cel:
-                expression: >-
-                  device.attributes['type'].string == 'mig-1g'
+        selectors:
+          - cel:
+              expression: >-
+                device.driver == 'gpu.example.com' &&
+                device.attributes['type'].string == 'mig-1g'
 ```
 
 The scheduler allocates `gpu-0-mig-1g-0` to pod-a and `gpu-0-mig-1g-1` to
-pod-b. Both consume from `gpu-0-counters` (22 + 22 = 44 <= 152). Both pods
+pod-b. Both consume from `gpu-0-counters` (20 + 20 = 40 <= 100). Both pods
 start successfully because both devices use the same MIG partitioning mode.
 
 #### Example 2: How the existing API does not solve the problem
@@ -381,7 +377,7 @@ spec:
     - name: gpu-0-counters
       counters:
         multiprocessors:
-          value: "152"
+          value: "100"
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceSlice
@@ -404,7 +400,7 @@ spec:
         - counterSet: gpu-0-counters
           counters:
             multiprocessors:
-              value: "22"
+              value: "20"
     - name: gpu-0-mig-1g-1
       attributes:
         type:
@@ -413,7 +409,7 @@ spec:
         - counterSet: gpu-0-counters
           counters:
             multiprocessors:
-              value: "22"
+              value: "20"
     # MPS shares
     - name: gpu-0-mps-half-0
       attributes:
@@ -423,7 +419,7 @@ spec:
         - counterSet: gpu-0-counters
           counters:
             multiprocessors:
-              value: "76"
+              value: "50"
     - name: gpu-0-mps-half-1
       attributes:
         type:
@@ -432,7 +428,7 @@ spec:
         - counterSet: gpu-0-counters
           counters:
             multiprocessors:
-              value: "76"
+              value: "50"
 ```
 
 ResourceClaims — pod-a requests a MIG partition, pod-b requests an MPS share:
@@ -447,12 +443,11 @@ spec:
   devices:
     requests:
       - name: gpu
-        exactly:
-          deviceClassName: gpu.example.com
-          selectors:
-            - cel:
-                expression: >-
-                  device.attributes['type'].string == 'mig-1g'
+        selectors:
+          - cel:
+              expression: >-
+                device.driver == 'gpu.example.com' &&
+                device.attributes['type'].string == 'mig-1g'
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
@@ -463,16 +458,15 @@ spec:
   devices:
     requests:
       - name: gpu
-        exactly:
-          deviceClassName: gpu.example.com
-          selectors:
-            - cel:
-                expression: >-
-                  device.attributes['type'].string == 'mps-half'
+        selectors:
+          - cel:
+              expression: >-
+                device.driver == 'gpu.example.com' &&
+                device.attributes['type'].string == 'mps-half'
 ```
 
-The scheduler sees `gpu-0-mig-1g-0` (22 SMs) and `gpu-0-mps-half-0` (76 SMs).
-Total: 98 <= 152 — the counter capacity check passes. The scheduler allocates
+The scheduler sees `gpu-0-mig-1g-0` (20 SMs) and `gpu-0-mps-half-0` (50 SMs).
+Total: 70 <= 100 — the counter capacity check passes. The scheduler allocates
 both. But at preparation time, the driver fails because MIG and MPS cannot be
 active simultaneously on the same physical GPU. Pod-b gets a cryptic
 preparation error. The scheduler may retry the same incompatible combination
@@ -502,7 +496,7 @@ spec:
     - name: gpu-0-counters
       counters:
         multiprocessors:
-          value: "152"
+          value: "100"
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceSlice
@@ -527,7 +521,7 @@ spec:
             - mig
           counters:
             multiprocessors:
-              value: "22"
+              value: "20"
     - name: gpu-0-mig-1g-1
       attributes:
         type:
@@ -538,7 +532,7 @@ spec:
             - mig
           counters:
             multiprocessors:
-              value: "22"
+              value: "20"
     # MPS shares
     - name: gpu-0-mps-half-0
       attributes:
@@ -550,7 +544,7 @@ spec:
             - mps
           counters:
             multiprocessors:
-              value: "76"
+              value: "50"
     - name: gpu-0-mps-half-1
       attributes:
         type:
@@ -561,7 +555,7 @@ spec:
             - mps
           counters:
             multiprocessors:
-              value: "76"
+              value: "50"
 ```
 
 ResourceClaims — identical to Example 2:
@@ -576,12 +570,11 @@ spec:
   devices:
     requests:
       - name: gpu
-        exactly:
-          deviceClassName: gpu.example.com
-          selectors:
-            - cel:
-                expression: >-
-                  device.attributes['type'].string == 'mig-1g'
+        selectors:
+          - cel:
+              expression: >-
+                device.driver == 'gpu.example.com' &&
+                device.attributes['type'].string == 'mig-1g'
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
@@ -592,12 +585,11 @@ spec:
   devices:
     requests:
       - name: gpu
-        exactly:
-          deviceClassName: gpu.example.com
-          selectors:
-            - cel:
-                expression: >-
-                  device.attributes['type'].string == 'mps-half'
+        selectors:
+          - cel:
+              expression: >-
+                device.driver == 'gpu.example.com' &&
+                device.attributes['type'].string == 'mps-half'
 ```
 
 The scheduler allocates `gpu-0-mig-1g-0` (group: `mig`) to pod-a. When
@@ -613,13 +605,11 @@ still be co-allocated, since they share a group.
 #### Example 4: Multiple compatible groups with an incompatible group
 
 A device may support more than two partitioning schemes, some of which can
-coexist. Devices that can coexist share a compatibility group, while
-incompatible devices use a separate group. In this example, a device
-advertises three partition types: `foo`, `bar`, and `baz`. `foo` and `bar`
-can coexist on the same device, but `baz` is incompatible with both. Each
-partition type has its own compatibility group (`group-foo`, `group-bar`,
-`group-baz`), and `foo` and `bar` devices additionally share the `group-fb`
-compatibility group to express their mutual compatibility.
+coexist. In this example, a device advertises three partition types: `foo`,
+`bar`, and `baz`. `foo` and `bar` can coexist on the same device, but `baz`
+is incompatible with both. To express this, `foo` devices include `bar` in
+their compatibility groups and vice versa, while `baz` devices only list
+their own group.
 
 ResourceSlices — a device advertising foo, bar, and baz partitions:
 
@@ -660,8 +650,8 @@ spec:
       consumesCounters:
         - counterSet: device-0-counters
           compatibilityGroups:
-            - group-foo
-            - group-fb
+            - foo
+            - bar
           counters:
             units:
               value: "25"
@@ -673,8 +663,8 @@ spec:
       consumesCounters:
         - counterSet: device-0-counters
           compatibilityGroups:
-            - group-bar
-            - group-fb
+            - bar
+            - foo
           counters:
             units:
               value: "25"
@@ -686,21 +676,21 @@ spec:
       consumesCounters:
         - counterSet: device-0-counters
           compatibilityGroups:
-            - group-baz
+            - baz
           counters:
             units:
               value: "50"
 ```
 
-`device-0-foo-0` and `device-0-bar-0` share the `group-fb` compatibility group,
-so they can be co-allocated. `device-0-baz-0` belongs only to `group-baz`, which
-shares no group with either foo or bar devices, so it cannot be co-allocated
-with them.
+`device-0-foo-0` (groups: `foo`, `bar`) and `device-0-bar-0` (groups: `bar`,
+`foo`) share compatibility groups, so they can be co-allocated. `device-0-baz-0`
+belongs only to `baz`, which shares no group with either foo or bar devices, so
+it cannot be co-allocated with them.
 
 For instance, if pod-a is allocated `device-0-foo-0`, a subsequent pod
-requesting `device-0-bar-0` succeeds (both share `group-fb`), but a pod
-requesting `device-0-baz-0` is rejected (`group-fb` vs `group-baz` — no
-shared group).
+requesting `device-0-bar-0` succeeds (both share `foo` and `bar`), but a pod
+requesting `device-0-baz-0` is rejected (`foo`/`bar` vs `baz` — no shared
+group).
 
 ### Scheduler Changes
 
